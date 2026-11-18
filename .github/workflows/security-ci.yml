@@ -1,0 +1,54 @@
+
+name: CI with Security Checks
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install project dependencies
+        run: |
+          python -m venv .project-venv
+          .project-venv/bin/python -m pip install -r requirements.txt
+          .project-venv/bin/python -m pip check
+          .project-venv/bin/python -m pip show requests urllib3
+
+      - name: Run unit tests
+        run: .project-venv/bin/python -m pytest tests/ -v
+
+      - name: Install security scanners separately
+        run: |
+          python -m venv .scanner-venv
+          .scanner-venv/bin/python -m pip install pip-audit bandit safety
+
+      - name: Scan dependencies and show CVEs (pip-audit)
+        run: .scanner-venv/bin/pip-audit -r requirements.txt --aliases --desc
+        continue-on-error: true
+
+      - name: Scan Python source code (Bandit)
+        run: .scanner-venv/bin/bandit -r src/ -ll
+        continue-on-error: true
+
+      - name: Run Safety CLI if API key is configured
+        env:
+          SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
+        run: |
+          if [ -n "$SAFETY_API_KEY" ]; then
+            .scanner-venv/bin/safety --key "$SAFETY_API_KEY" scan --target .
+          else
+            echo "Safety needs SAFETY_API_KEY; pip-audit results are available above."
+          fi
+        continue-on-error: true
